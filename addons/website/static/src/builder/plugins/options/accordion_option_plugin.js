@@ -17,6 +17,7 @@ export class AccordionItemOption extends BaseOptionComponent {
 
 class accordionOptionPlugin extends Plugin {
     static id = "accordionOptionPlugin";
+    /** @type {import("plugins").WebsiteResources} */
     resources = {
         builder_options: [
             withSequence(SNIPPET_SPECIFIC, AccordionOption),
@@ -27,8 +28,8 @@ class accordionOptionPlugin extends Plugin {
             DefineCustomIconAction,
             CustomAccordionIconAction,
         },
-        force_not_editable_selector: [".accordion-button"],
-        force_editable_selector: [".accordion-button span"],
+        content_not_editable_selectors: [".accordion-button"],
+        content_editable_selectors: [".accordion-button span"],
     };
 }
 
@@ -75,7 +76,9 @@ export class DefineCustomIconAction extends BuilderAction {
 export class CustomAccordionIconAction extends BuilderAction {
     static id = "customAccordionIcon";
     apply({ editingElement, params, value }) {
-        const accordionButtonEls = editingElement.querySelectorAll(".accordion-button");
+        const accordionButtonEls = editingElement.querySelectorAll(
+            ":scope > .accordion-item > .accordion-button"
+        );
         const activeCustomIcon = editingElement.dataset.activeCustomIcon || "fa fa-arrow-up";
         const inactiveCustomIcon = editingElement.dataset.inactiveCustomIcon || "fa fa-arrow-down";
         if (value) {

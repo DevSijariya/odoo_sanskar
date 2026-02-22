@@ -8,9 +8,8 @@ import { closestElement } from "@html_editor/utils/dom_traversal";
 
 export class MassMailingLayoutColumnOption extends LayoutColumnOption {
     static selector = ".o_mail_snippet_general";
-    static exclude = ".s_reviews_wall";
-    static applyTo =
-        ":scope > *:has(> .row:not(.s_nb_column_fixed)), * > .s_allow_columns";
+    static exclude = ".s_reviews_wall, .s_mail_alert";
+    static applyTo = ":scope > *:has(> .row:not(.s_nb_column_fixed)), * > .s_allow_columns";
 }
 
 class MassMailingLayoutColumnPlugin extends Plugin {

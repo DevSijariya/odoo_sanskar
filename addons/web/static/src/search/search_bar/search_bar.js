@@ -9,12 +9,30 @@ import { _t } from "@web/core/l10n/translation";
 import { SearchBarMenu } from "../search_bar_menu/search_bar_menu";
 import { Component, status, useRef, useState } from "@odoo/owl";
 import { useDropdownState } from "@web/core/dropdown/dropdown_hooks";
-import { hasTouch } from "@web/core/browser/feature_detection";
+import { hasTouch, isIOS } from "@web/core/browser/feature_detection";
 import { Dropdown } from "@web/core/dropdown/dropdown";
 import { DropdownItem } from "@web/core/dropdown/dropdown_item";
 import { useNavigation } from "@web/core/navigation/navigation";
 
 const parsers = registry.category("parsers");
+
+const parseValue = (value, fieldType) => {
+    const parser = parsers.contains(fieldType) ? parsers.get(fieldType) : (str) => str;
+    switch (fieldType) {
+        case "date": {
+            return serializeDate(parser(value));
+        }
+        case "datetime": {
+            return serializeDateTime(parser(value));
+        }
+        case "many2one": {
+            return value;
+        }
+        default: {
+            return parser(value);
+        }
+    }
+};
 
 const CHAR_FIELDS = ["char", "html", "many2many", "many2one", "one2many", "text", "properties"];
 const FOLDABLE_TYPES = ["properties", "many2one", "many2many"];
@@ -195,6 +213,7 @@ export class SearchBar extends Component {
                 if (fuzzyTest(trimmedQuery.toLowerCase(), label.toLowerCase())) {
                     items.push({
                         id: nextItemId++,
+                        fieldType,
                         searchItemDescription: searchItem.description,
                         preposition,
                         searchItemId: searchItem.id,
@@ -209,29 +228,16 @@ export class SearchBar extends Component {
             return items;
         }
 
-        const parser = parsers.contains(fieldType) ? parsers.get(fieldType) : (str) => str;
         let value;
         try {
-            switch (fieldType) {
-                case "date":
-                    value = serializeDate(parser(trimmedQuery));
-                    break;
-                case "datetime":
-                    value = serializeDateTime(parser(trimmedQuery));
-                    break;
-                case "selection":
-                case "many2one":
-                    value = trimmedQuery;
-                    break;
-                default:
-                    value = parser(trimmedQuery);
-            }
+            value = parseValue(trimmedQuery, fieldType);
         } catch {
             return [];
         }
 
         const item = {
             id: nextItemId++,
+            fieldType,
             searchItemDescription: searchItem.description,
             preposition,
             searchItemId: searchItem.id,
@@ -424,7 +430,20 @@ export class SearchBar extends Component {
         }
 
         if (!item.unselectable) {
-            const { searchItemId, label, operator, value } = item;
+            const { searchItemId, fieldType, operator } = item;
+            let { label, value } = item;
+            if (
+                !["selection", "boolean", "tags"].includes(fieldType) &&
+                this.state.query !== label &&
+                !item.isChild
+            ) {
+                // The query (the search input) changed but it hasn't been reflected yet in the
+                // items (a rendering is scheduled but hasn't been applied to the DOM yet), so select
+                // the item but use the current query. Typical usecase is when scanning a barcode,
+                // as the keystrokes are closer than when a user uses a regular keyboard.
+                label = this.state.query;
+                value = parseValue(this.state.query.trim(), fieldType);
+            }
             this.env.searchModel.addAutoCompletionValues(searchItemId, { label, operator, value });
         }
 
@@ -471,6 +490,12 @@ export class SearchBar extends Component {
                 return [];
             },
             hotkeys: {
+                tab: {
+                    isAvailable: () => false,
+                },
+                "shift+tab": {
+                    isAvailable: () => false,
+                },
                 enter: {
                     isAvailable: () => !this.inputDropdownState.isOpen,
                     callback: () => this.env.searchModel.search() /** @todo keep this thing ?*/,
@@ -644,6 +669,9 @@ export class SearchBar extends Component {
     onSearchInput(ev) {
         if (!hasTouch()) {
             this.searchBarDropdownState.close();
+        }
+        if (isIOS() && !ev.key) {
+            return;
         }
         const query = ev.target.value;
         if (query.trim()) {

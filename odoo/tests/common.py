@@ -20,6 +20,7 @@ import os
 import pathlib
 import platform
 import pprint
+import psutil
 import re
 import shutil
 import signal
@@ -382,13 +383,22 @@ class BaseCase(case.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        def check_remaining_processes():
+            current_process = psutil.Process()
+            children = current_process.children(recursive=False)
+            for child in children:
+                _logger.warning('A child process was found, terminating it: %s', child)
+                child.terminate()
+            psutil.wait_procs(children, timeout=10)  # mainly to avoid a zombie process that would be logged again at the end.
+        cls.addClassCleanup(check_remaining_processes)
+
         def check_remaining_patchers():
             for patcher in _patch._active_patches:
                 _logger.warning("A patcher (targeting %s.%s) was remaining active at the end of %s, disabling it...", patcher.target, patcher.attribute, cls.__name__)
                 patcher.stop()
         cls.addClassCleanup(check_remaining_patchers)
         super().setUpClass()
-        if 'standard' in cls.test_tags:
+        if 'standard' in cls.test_tags or 'click_all' in cls.test_tags:
             # if the method is passed directly `patch` discards the session
             # object which we need
             # pylint: disable=unnecessary-lambda
@@ -1449,6 +1459,8 @@ class ChromeBrowser:
             '--disable-translate': '',
             '--no-sandbox': '',
             '--disable-gpu': '',
+            '--enable-unsafe-swiftshader': '',
+            '--mute-audio': '',
         }
         switches = {
             # required for tours that use Youtube autoplay conditions (namely website_slides' "course_tour")
@@ -1663,7 +1675,7 @@ class ChromeBrowser:
             self._websocket_send(cmd, params={'requestId': params['requestId'], **response})
         except websocket.WebSocketConnectionClosedException:
             pass
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, OSError):
             # this can happen if the browser is closed. Just ignore it.
             _logger.info("Websocket error while handling request %s", params['request']['url'])
 
@@ -2058,7 +2070,7 @@ class Screencaster:
                 '-y', '-loglevel', 'warning',
                 '-f', 'concat', '-safe', '0', '-i', concat_script_path,
                 '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
-                '-pix_fmt', 'yuv420p', '-g', '0',
+                '-c:v', 'libx265', '-x265-params', 'lossless=1',
                 outfile,
             ], preexec_fn=_preexec, check=True)
         except subprocess.CalledProcessError:
@@ -2301,13 +2313,25 @@ class HttpCase(TransactionCase):
         self.session.logout(keep_db=keep_db)
         odoo.http.root.session_store.save(self.session)
 
-    def authenticate(self, user, password, browser: ChromeBrowser = None):
+    def authenticate(self, user, password, *,
+        browser: ChromeBrowser = None, session_extra: dict | None = None):
         if getattr(self, 'session', None):
             odoo.http.root.session_store.delete(self.session)
 
         self.session = session = odoo.http.root.session_store.new()
-        session.update(odoo.http.get_default_session(), db=get_db_name())
+        session.update(
+            odoo.http.get_default_session(),
+            db=get_db_name(),
+            # In order to avoid perform a query to each first `url_open`
+            # in a test (insert `res.device.log`).
+            _trace_disable=True,
+        )
         session.context['lang'] = odoo.http.DEFAULT_LANG
+
+        if session_extra:
+            if extra_ctx := session_extra.pop('context', None):
+                session.context.update(extra_ctx)
+            session.update(session_extra)
 
         if user: # if authenticated
             # Flush and clear the current transaction.  This is useful, because
